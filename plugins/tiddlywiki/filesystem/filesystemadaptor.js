@@ -46,57 +46,62 @@ The boot process populates $tw.boot.files for each of the tiddler files that it 
 It is the responsibility of the filesystem adaptor to update $tw.boot.files for new files that are created.
 */
 FileSystemAdaptor.prototype.getTiddlerFileInfo = function(tiddler,callback) {
-	// See if we've already got information about this file
-	var self = this,
-		title = tiddler.fields.title,
-		fileInfo = $tw.boot.files[title];
-	if(fileInfo) {
-		// If so, just invoke the callback
-		callback(null,fileInfo);
-	} else {
-		// Otherwise, we'll need to generate it
-		fileInfo = {};
-		var tiddlerType = tiddler.fields.type || "text/vnd.tiddlywiki";
-		// Get the content type info
-		var contentTypeInfo = $tw.config.contentTypeInfo[tiddlerType] || {};
-		// Get the file type by looking up the extension
-		var extension = contentTypeInfo.extension || ".tid";
-		fileInfo.type = ($tw.config.fileExtensionInfo[extension] || {type: "application/x-tiddler"}).type;
-		// Use a .meta file unless we're saving a .tid file.
-		// (We would need more complex logic if we supported other template rendered tiddlers besides .tid)
-		fileInfo.hasMetaFile = (fileInfo.type !== "application/x-tiddler") && (fileInfo.type !== "application/json");
-		if(!fileInfo.hasMetaFile) {
-			extension = ".tid";
-		}
-		// Generate the base filepath and ensure the directories exist
-		var baseFilepath = path.resolve($tw.boot.wikiTiddlersPath,this.generateTiddlerBaseFilepath(title));
-		$tw.utils.createFileDirectories(baseFilepath);
-		// Start by getting a list of the existing files in the directory
-		fs.readdir(path.dirname(baseFilepath),function(err,files) {
-			if(err) {
-				return callback(err);
-			}
-			// Start with the base filename plus the extension
-			var filepath = baseFilepath;
-			if(filepath.substr(-extension.length).toLocaleLowerCase() !== extension.toLocaleLowerCase()) {
-				filepath = filepath + extension;
-			}
-			var filename = path.basename(filepath),
-				count = 1;
-			// Add a discriminator if we're clashing with an existing filename while
-			// handling case-insensitive filesystems (NTFS, FAT/FAT32, etc.)
-			while(files.some(function(value) {return value.toLocaleLowerCase() === filename.toLocaleLowerCase();})) {
-				filepath = baseFilepath + " " + (count++) + extension;
-				filename = path.basename(filepath);
-			}
-			// Set the final fileInfo
-			fileInfo.filepath = filepath;
-console.log("\x1b[1;35m" + "For " + title + ", type is " + fileInfo.type + " hasMetaFile is " + fileInfo.hasMetaFile + " filepath is " + fileInfo.filepath + "\x1b[0m");
-			$tw.boot.files[title] = fileInfo;
-			// Pass it to the callback
-			callback(null,fileInfo);
-		});
+    console.log("looking up info on tiddler: " + tiddler.fields.title);
+    // See if we've already got information about this file
+    var self = this,
+	title = tiddler.fields.title,
+	fileInfo = $tw.boot.files[title];
+
+    if (fileInfo) {
+	// If so, just invoke the callback
+	callback(null,fileInfo);
+    } else {
+	// Otherwise, we'll need to generate it
+	fileInfo = {};
+	var tiddlerType = tiddler.fields.type || "text/vnd.tiddlywiki";
+	// Get the content type info
+	var contentTypeInfo = $tw.config.contentTypeInfo[tiddlerType] || {};
+	// Get the file type by looking up the extension
+	var extension = contentTypeInfo.extension || ".tid";
+	fileInfo.type = ($tw.config.fileExtensionInfo[extension] || {type: "application/x-tiddler"}).type;
+	// Use a .meta file unless we're saving a .tid file.
+	// (We would need more complex logic if we supported other template rendered tiddlers besides .tid)
+	fileInfo.hasMetaFile = (fileInfo.type !== "application/x-tiddler") && (fileInfo.type !== "application/json");
+	if(!fileInfo.hasMetaFile) {
+	    extension = ".tid";
 	}
+        
+	// Generate the base filepath and ensure the directories exist
+	var baseFilepath = path.resolve($tw.boot.wikiTiddlersPath,this.generateTiddlerBaseFilepath(title));
+	$tw.utils.createFileDirectories(baseFilepath);
+	// Start by getting a list of the existing files in the directory
+	fs.readdir(path.dirname(baseFilepath),function(err,files) {
+	    if(err) {
+		return callback(err);
+	    }
+
+            // Start with the base filename plus the extension
+	    var filepath = baseFilepath;
+	    if(filepath.substr(-extension.length).toLocaleLowerCase() !== extension.toLocaleLowerCase()) {
+		filepath = filepath + extension;
+	    }
+	    var filename = path.basename(filepath),
+		count = 1;
+
+            // Add a discriminator if we're clashing with an existing filename while
+	    // handling case-insensitive filesystems (NTFS, FAT/FAT32, etc.)
+	    while(files.some(function(value) {return value.toLocaleLowerCase() === filename.toLocaleLowerCase();})) {
+		filepath = baseFilepath + " " + (count++) + extension;
+		filename = path.basename(filepath);
+	    }
+	    // Set the final fileInfo
+	    fileInfo.filepath = filepath;
+            console.log("\x1b[1;35m" + "For " + title + ", type is " + fileInfo.type + " hasMetaFile is " + fileInfo.hasMetaFile + " filepath is " + fileInfo.filepath + "\x1b[0m");
+	    $tw.boot.files[title] = fileInfo;
+	    // Pass it to the callback
+	    callback(null,fileInfo);
+	});
+    }
 };
 
 /*
@@ -143,45 +148,49 @@ FileSystemAdaptor.prototype.generateTiddlerBaseFilepath = function(title) {
 /*
 Save a tiddler and invoke the callback with (err,adaptorInfo,revision)
 */
-FileSystemAdaptor.prototype.saveTiddler = function(tiddler,callback) {
-	var self = this;
-	this.getTiddlerFileInfo(tiddler,function(err,fileInfo) {
+FileSystemAdaptor.prototype.saveTiddler = function(tiddler, callback) {
+    var self = this;
+    this.getTiddlerFileInfo(tiddler,function(err,fileInfo) {
+	if(err) {
+	    return callback(err);
+	}
+
+        var filepath = fileInfo.filepath,
+	    error = $tw.utils.createDirectory(path.dirname(filepath));
+	if(error) {
+	    return callback(error);
+	}
+
+        if(fileInfo.hasMetaFile) {
+	    // Save the tiddler as a separate body and meta file
+	    var typeInfo = $tw.config.contentTypeInfo[tiddler.fields.type || "text/plain"] || {encoding: "utf8"};
+	    fs.writeFile(filepath,tiddler.fields.text,{encoding: typeInfo.encoding},function(err) {
 		if(err) {
+		    return callback(err);
+		}
+		content = self.wiki.renderTiddler("text/plain","$:/core/templates/tiddler-metadata",{variables: {currentTiddler: tiddler.fields.title}});
+		fs.writeFile(fileInfo.filepath + ".meta",content,{encoding: "utf8"},function (err) {
+		    if(err) {
 			return callback(err);
+		    }
+		    self.logger.log("Saved file",filepath);
+		    return callback(null);
+		});
+	    });
+	} else {
+            console.log("hard writing file to path: " + filepath);
+
+	    // Save the tiddler as a self contained templated file
+	    var content = self.wiki.renderTiddler("text/plain","$:/core/templates/tid-tiddler",{variables: {currentTiddler: tiddler.fields.title}});
+	    fs.writeFile(filepath,content,{encoding: "utf8"},function (err) {
+		if(err) {
+		    return callback(err);
 		}
-		var filepath = fileInfo.filepath,
-			error = $tw.utils.createDirectory(path.dirname(filepath));
-		if(error) {
-			return callback(error);
-		}
-		if(fileInfo.hasMetaFile) {
-			// Save the tiddler as a separate body and meta file
-			var typeInfo = $tw.config.contentTypeInfo[tiddler.fields.type || "text/plain"] || {encoding: "utf8"};
-			fs.writeFile(filepath,tiddler.fields.text,{encoding: typeInfo.encoding},function(err) {
-				if(err) {
-					return callback(err);
-				}
-				content = self.wiki.renderTiddler("text/plain","$:/core/templates/tiddler-metadata",{variables: {currentTiddler: tiddler.fields.title}});
-				fs.writeFile(fileInfo.filepath + ".meta",content,{encoding: "utf8"},function (err) {
-					if(err) {
-						return callback(err);
-					}
-					self.logger.log("Saved file",filepath);
-					return callback(null);
-				});
-			});
-		} else {
-			// Save the tiddler as a self contained templated file
-			var content = self.wiki.renderTiddler("text/plain","$:/core/templates/tid-tiddler",{variables: {currentTiddler: tiddler.fields.title}});
-			fs.writeFile(filepath,content,{encoding: "utf8"},function (err) {
-				if(err) {
-					return callback(err);
-				}
-				self.logger.log("Saved file",filepath);
-				return callback(null);
-			});
-		}
-	});
+		self.logger.log("Saved file",filepath);
+		return callback(null);
+	    });
+	}
+    });
 };
 
 /*

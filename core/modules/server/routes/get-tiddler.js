@@ -34,7 +34,7 @@ exports.handler = function(request,response,state) {
 			}
 		});
 		tiddlerFields.revision = state.wiki.getChangeCount(title);
-		tiddlerFields.type = tiddlerFields.type || "text/vnd.tiddlywiki";
+	        tiddlerFields.type = tiddlerFields.type || "text/vnd.tiddlywiki";                
 		response.writeHead(200, {"Content-Type": "application/json"});
 		response.end(JSON.stringify(tiddlerFields),"utf8");
 	} else {

@@ -774,18 +774,25 @@ exports.clearGlobalCache = function() {
 
 // Return the named cache object for a tiddler. If the cache doesn't exist then the initializer function is invoked to create it
 exports.getCacheForTiddler = function(title,cacheName,initializer) {
-	this.caches = this.caches || Object.create(null);
-	var caches = this.caches[title];
-	if(caches && caches[cacheName]) {
-		return caches[cacheName];
-	} else {
-		if(!caches) {
-			caches = Object.create(null);
-			this.caches[title] = caches;
-		}
-		caches[cacheName] = initializer();
-		return caches[cacheName];
+    this.caches = this.caches || Object.create(null);
+    var caches = this.caches[title];
+    
+    if(caches && caches[cacheName]) {
+        var found = caches[cacheName];
+        if ("wiki" in found) {
+            found.wiki.title = title;
+        }
+
+        return found;
+    } else {
+	if(!caches) {
+	    caches = Object.create(null);
+	    this.caches[title] = caches;
 	}
+
+        caches[cacheName] = initializer();
+	return caches[cacheName];
+    }
 };
 
 // Clear all caches associated with a particular tiddler, or, if the title is null, clear all the caches for all the tiddlers
@@ -846,9 +853,10 @@ exports.parseText = function(type,text,options) {
 	}
 	// Return the parser instance
 	return new Parser(type,text,{
-		parseAsInline: options.parseAsInline,
-		wiki: this,
-		_canonical_uri: options._canonical_uri
+	    parseAsInline: options.parseAsInline,
+	    wiki: this,
+            _canonical_uri: options._canonical_uri,
+            title: options.title,
 	});
 };
 
@@ -856,16 +864,21 @@ exports.parseText = function(type,text,options) {
 Parse a tiddler according to its MIME type
 */
 exports.parseTiddler = function(title,options) {
-	options = $tw.utils.extend({},options);
-	var cacheType = options.parseAsInline ? "inlineParseTree" : "blockParseTree",
-		tiddler = this.getTiddler(title),
-		self = this;
-	return tiddler ? this.getCacheForTiddler(title,cacheType,function() {
-			if(tiddler.hasField("_canonical_uri")) {
-				options._canonical_uri = tiddler.fields._canonical_uri;
-			}
-			return self.parseText(tiddler.fields.type,tiddler.fields.text,options);
-		}) : null;
+    options = $tw.utils.extend({},options);
+    var cacheType = options.parseAsInline ? "inlineParseTree" : "blockParseTree",
+	tiddler = this.getTiddler(title),
+	self = this;
+
+    return tiddler ? this.getCacheForTiddler(title, cacheType, function() {
+	if(tiddler.hasField("_canonical_uri")) {
+	    options._canonical_uri = tiddler.fields._canonical_uri;
+	}
+
+        // Pass in the tiddler name.
+        options.title = tiddler.fields.title;
+
+	return self.parseText(tiddler.fields.type, tiddler.fields.text, options);
+    }) : null;
 };
 
 exports.parseTextReference = function(title,field,index,options) {

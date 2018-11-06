@@ -17,7 +17,7 @@ exports.method = "GET";
 exports.path = /^\/files\/(.+)$/;
 
 exports.handler = function(request,response,state) {
-	var path = require("path"),
+    var path = require("path"),
 		fs = require("fs"),
 		util = require("util");
 	var filename = path.resolve($tw.boot.wikiPath,"files",decodeURIComponent(state.params[0])),

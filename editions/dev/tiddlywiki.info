@@ -3,7 +3,7 @@
 	"plugins": [
 		"tiddlywiki/highlight",
 		"tiddlywiki/nodewebkitsaver",
-		"tiddlywiki/github-fork-ribbon"
+		"tiddlywiki/github-fork-ribbon",
 	],
 	"themes": [
 		"tiddlywiki/vanilla",
