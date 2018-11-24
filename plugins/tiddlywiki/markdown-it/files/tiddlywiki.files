@@ -1,0 +1,100 @@
+{
+	  "tiddlers": [
+        {
+			      "file": "markdown-it.min.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-min.js",
+				        "module-type": "library"
+			      }
+		    },
+		    {
+			      "file": "markdown-it-katex.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-katex.js",
+				        "module-type": "library"
+			      }
+		    },
+        {
+			      "file": "markdown-it-footnote.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-footnote.js",
+				        "module-type": "library"
+			      }
+		    },
+        {
+			      "file": "markdown-it-inline.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-inline.js",
+				        "module-type": "library"
+			      }
+		    },       
+        {
+			      "file": "markdown-it-tiddlywiki.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-tiddlywiki.js",
+				        "module-type": "library"
+			      }
+		    },       
+        {
+			      "file": "markdown-it-highlight.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-highlight.js",
+				        "module-type": "library"
+			      }
+		    },
+        {
+			      "file": "markdown-it-link-attributes.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-link-attributes.js",
+				        "module-type": "library"
+			      }
+		    },
+        {
+			      "file": "markdown-it-imsize.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-imsize.js",
+				        "module-type": "library"
+			      }
+        },
+        {
+			      "file": "markdown-it-fence.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/markdown-it-fence.js",
+				        "module-type": "library"
+			      }
+        },                              
+        {
+			      "file": "js-yaml.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/js-yaml.js",
+				        "module-type": "library"
+			      }
+        },
+        {
+			      "file": "custom-fence.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/custom-fence.js",
+				        "module-type": "library"
+			      }
+        },                                      
+        {
+			      "file": "moment.js",
+			      "fields": {
+				        "type": "application/javascript",
+				        "title": "$:/plugins/wikilabs/markdown-it/moment.js",
+				        "module-type": "library"
+			      }
+        }                                      
+    ]
+}

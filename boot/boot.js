@@ -955,6 +955,12 @@ $tw.PDFColorSpace.PNGColorTypeMap = {
     [$tw.PDFColorSpace.ColorSpaces[$tw.PDFColorSpace.DeviceRGBColorSpace]]: 2
 };
 
+// basically Adobe's "I upgraded your color space".
+$tw.PDFColorSpace.PNGColorTypeAlphaMap = {
+    [$tw.PDFColorSpace.ColorSpaces[$tw.PDFColorSpace.DeviceGrayColorSpace]]: 4,
+    [$tw.PDFColorSpace.ColorSpaces[$tw.PDFColorSpace.DeviceRGBColorSpace]]: 6
+};
+
 $tw.PDFIndexedColorSpace = function(document, root, bitsPerComponent) {
     $tw.PDFColorSpace.call(
         this,
@@ -1088,8 +1094,8 @@ $tw.PDFImage = function(document, parent, image) {
     this.document = document;
     this.parent = parent;
     this.image = image;
-    this.attributes = image.getDictionary();
 
+    this.attributes = image.getDictionary();
     this.width = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.WidthKey);
     this.height = this.document.reader.queryDictionaryObject(
@@ -1097,6 +1103,25 @@ $tw.PDFImage = function(document, parent, image) {
     this.length = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.LengthKey);
 
+    this.softMask = null;
+    var softMaskValue = this.document.reader.queryDictionaryObject(
+        this.attributes, $tw.PDFImage.SoftMaskKey);
+
+    this.decodeParameters = null;
+    var decodeParametersValue = this.document.reader.queryDictionaryObject(
+        this.attributes, $tw.PDFImage.DecodeParametersKey);
+
+    if (decodeParametersValue != undefined) {
+        console.log("decode parameters present");
+        console.log(decodeParametersValue.toJSObject());
+    }
+
+    if (softMaskValue != undefined) {
+        console.log("found soft mask. exciting");
+        console.log(softMaskValue);
+        this.softMask = new $tw.PDFImage(this.document, null, softMaskValue);
+    }
+    
     var colorValue = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.ColorSpaceKey);
 
@@ -1137,8 +1162,22 @@ $tw.PDFImage.HeightKey = "Height";
 $tw.PDFImage.LengthKey = "Length";
 $tw.PDFImage.ColorSpaceKey = "ColorSpace";
 $tw.PDFImage.BitsPerComponentKey = "BitsPerComponent";
+$tw.PDFImage.SoftMaskKey = "SMask";
+$tw.PDFImage.DecodeParametersKey = "DecodeParms";    
 
 $tw.PDFImage.prototype.read = function() {
+    var softMaskData = null;
+    if (this.softMask != null) {
+        console.log("reading soft mask first");
+        var softMaskStream = this.document.reader.startReadingFromStream(this.softMask.image);
+
+        // this is always "device gray".
+        var softMaskData = softMaskStream.read(this.softMask.width * this.softMask.height);
+        
+        //console.log("soft mask data:");
+        //console.log(softMaskData);
+    }
+
     var stream = this.document.reader.startReadingFromStream(this.image);
     var data = null;
     var colorType = null;
@@ -1159,8 +1198,26 @@ $tw.PDFImage.prototype.read = function() {
         var numberComponents = $tw.PDFColorSpace.ComponentsPerColorSpace[this.color.kind];
         data = stream.read(this.width * this.height * numberComponents);
         colorType = $tw.PDFColorSpace.PNGColorTypeMap[this.color.kind];
+
+        // but if the softmask is present, we get an upgrade.
+        if (softMaskData != null) {
+            colorType = $tw.PDFColorSpace.PNGColorTypeAlphaMap[this.color.kind];
+
+            // fix up data. this is slow. make it better.
+            var mergedData = [];
+            for (var i = 0; i < (data.length / numberComponents); i++) {
+                for (var c = 0; c < numberComponents; c++) {
+                    mergedData.push(data[i + c]);
+                }
+
+                mergedData.push(softMaskData[i]);
+            }
+
+            data = mergedData;
+        }
     }
-    
+
+    console.log(colorType);
     var result = new png.PNG({
         "width": this.width,
         "height": this.height,
@@ -1388,6 +1445,10 @@ $tw.PDFExternalObject.prototype.read = function() {
         else if (objectMetadata.Subtype.value == $tw.PDFExternalObject.FormSubtype) {
             // pull it out the hard way.
             // I don't think it can be anything else.
+            if (objectMetadata.Type === undefined) {
+                continue;
+            }
+            
             if (objectMetadata.Type.value == "XObject") {
                 var indirect = this.root.queryObject(name);
                 var objectID = indirect.getObjectID();
@@ -2550,8 +2611,8 @@ $tw.loadDocuments = function(documents, root) {
             continue;
         }
 
-        // if (documentName != "1701.06264.pdf") {
-        //     continue;
+        // if (documentName != "1502.04623.pdf") { //"variational-inference-lecture1-blei.pdf") { //"1701.06264.pdf") {
+        //    continue;
         // }
 
         var documentPath = path.resolve(root, documentName);
