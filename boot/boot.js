@@ -25,7 +25,7 @@ $tw.utils = $tw.utils || Object.create(null);
 var WRITE_IMAGES_DIR = "dump";
 var IMAGE_INDEX = 0;    
     
-var fs, path, vm, pdf, png, pdfjs, streams, assert, Canvas;
+var fs, path, vm, pdf, png, pdfjs, zlib, streams, assert, Canvas;
 if($tw.node) {
         fs = require("fs");
         path = require("path");
@@ -33,6 +33,7 @@ if($tw.node) {
         pdf = require("hummus");
         png = require("pngjs");
         pdfjs = require("pdfjs-dist");
+        zlib = require("zlib");
         streams = require("memory-streams");
         assert = require('assert');
         Canvas = require('canvas');
@@ -933,8 +934,9 @@ $tw.PDFColorSpace = function(document, root, kind, bitsPerComponent) {
 $tw.PDFColorSpace.DeviceGrayColorSpace = "DeviceGray";
 $tw.PDFColorSpace.DeviceRGBColorSpace = "DeviceRGB";
 $tw.PDFColorSpace.IndexedColorSpace = "Indexed";    
+$tw.PDFColorSpace.ICCBasedColorSpace = "ICCBased";
     
-    $tw.PDFColorSpace.ColorSpaces = {
+$tw.PDFColorSpace.ColorSpaces = {
     [$tw.PDFColorSpace.DeviceGrayColorSpace]: 0,
     [$tw.PDFColorSpace.DeviceRGBColorSpace]: 1,
     [$tw.PDFColorSpace.IndexedColorSpace]: 2
@@ -1013,6 +1015,27 @@ $tw.PDFIndexedColorSpace.prototype.read = function() {
     }
 }
 
+$tw.PDFICCBasedColorSpace = function(document, root, bitsPerComponent) {
+    $tw.PDFColorSpace.call(
+        this,
+        document,
+        root,
+        null,
+        bitsPerComponent);
+
+    this.read();
+}
+
+$tw.PDFICCBasedColorSpace.prototype = Object.create($tw.PDFColorSpace.prototype);
+$tw.PDFICCBasedColorSpace.prototype.constructor = $tw.PDFICCBasedColorSpace;
+
+$tw.PDFICCBasedColorSpace.prototype.read = function() {
+    var rootDictionary = this.root.getDictionary();
+    var alternateName = this.document.reader.queryDictionaryObject(
+        rootDictionary, "Alternate");
+    this.alternate = $tw.PDFColorSpace.ColorSpaces[alternateName];
+}
+    
 $tw.convertPDFToPNG = function(bytes, pageNumber) {
     // use pdfjs to convert to a canvas.
     var source = {
@@ -1096,13 +1119,15 @@ $tw.PDFImage = function(document, parent, image) {
     this.image = image;
 
     this.attributes = image.getDictionary();
+    this.filter = this.document.reader.queryDictionaryObject(
+        this.attributes, $tw.PDFImage.FilterKey);
     this.width = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.WidthKey);
     this.height = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.HeightKey);
     this.length = this.document.reader.queryDictionaryObject(
-        this.attributes, $tw.PDFImage.LengthKey);
-
+        this.attributes, $tw.PDFImage.LengthKey).value;
+        
     this.softMask = null;
     var softMaskValue = this.document.reader.queryDictionaryObject(
         this.attributes, $tw.PDFImage.SoftMaskKey);
@@ -1113,7 +1138,7 @@ $tw.PDFImage = function(document, parent, image) {
 
     if (decodeParametersValue != undefined) {
         console.log("decode parameters present");
-        console.log(decodeParametersValue.toJSObject());
+        this.decodeParameters = decodeParametersValue;
     }
 
     if (softMaskValue != undefined) {
@@ -1136,7 +1161,22 @@ $tw.PDFImage = function(document, parent, image) {
             this.color = new $tw.PDFIndexedColorSpace(
                 this.document,
                 colorValue,
-                this.document.reader.queryDictionaryObject(this.attributes, $tw.PDFImage.BitsPerComponentKey));
+                this.document.reader.queryDictionaryObject(this.attributes, $tw.PDFImage.BitsPerComponentKey).value);
+        }
+        else if (specialName == $tw.PDFColorSpace.ICCBasedColorSpace) {
+            console.log("encountered ICC-based color");
+            var ignore = new $tw.PDFICCBasedColorSpace(
+                this.document,
+                this.document.reader.queryArrayObject(colorValue, 1),
+                this.document.reader.queryDictionaryObject(this.attributes, $tw.PDFImage.BitsPerComponentKey).value);
+
+            // "use ICC" flag?
+            this.color = new $tw.PDFColorSpace(
+                this.document,
+                colorValue,
+                ignore.alternate,
+                this.document.reader.queryDictionaryObject(
+                    this.attributes, $tw.PDFImage.BitsPerComponentKey).value);
         }
         else {
             console.log("probably don't read this image for now: " + specialName);
@@ -1149,7 +1189,7 @@ $tw.PDFImage = function(document, parent, image) {
             colorValue,
             $tw.PDFColorSpace.ColorSpaces[colorValue.value],
             this.document.reader.queryDictionaryObject(
-                this.attributes, $tw.PDFImage.BitsPerComponentKey));
+                this.attributes, $tw.PDFImage.BitsPerComponentKey).value);
     }
     else {
         // HACK.
@@ -1157,6 +1197,7 @@ $tw.PDFImage = function(document, parent, image) {
     }
 }
 
+$tw.PDFImage.FilterKey = "Filter";    
 $tw.PDFImage.WidthKey = "Width";
 $tw.PDFImage.HeightKey = "Height";    
 $tw.PDFImage.LengthKey = "Length";
@@ -1166,6 +1207,7 @@ $tw.PDFImage.SoftMaskKey = "SMask";
 $tw.PDFImage.DecodeParametersKey = "DecodeParms";    
 
 $tw.PDFImage.prototype.read = function() {
+    console.log("reading image start");
     var softMaskData = null;
     if (this.softMask != null) {
         console.log("reading soft mask first");
@@ -1196,18 +1238,202 @@ $tw.PDFImage.prototype.read = function() {
     }
     else {
         var numberComponents = $tw.PDFColorSpace.ComponentsPerColorSpace[this.color.kind];
-        data = stream.read(this.width * this.height * numberComponents);
+        var expectedLength = this.width * this.height * numberComponents;
+        data = stream.read(expectedLength);
+
+        // I don't think hummus handles the PNG predictors properly.
+        if (this.decodeParameters != null) {
+            // Check if predictor >= 10 in use.
+            var predictorValue = this.document.reader.queryDictionaryObject(
+                this.decodeParameters, "Predictor");
+            if (predictorValue !== undefined) {
+                predictorValue = predictorValue.value;
+
+                // only handle 8-bit for now.
+                if (predictorValue >= 10 && this.color.bitsPerComponent == 8) {
+                    console.log("predictor 10 in use... investigating");
+                    var verbatimStream = this.document.reader.startReadingFromStreamForPlainCopying(this.image);
+                    var verbatimData = Buffer.from(verbatimStream.read(this.length));
+                    var inflatedData = zlib.inflateSync(verbatimData);
+                    // console.log("inflated to size " + inflatedData.length);
+
+                    // predict each byte.
+                    var unpredictedData = [];
+                    for (var rowIndex = 0; rowIndex < this.height; rowIndex++) {
+                        var bufferRowStart = (this.width * numberComponents + 1) * rowIndex;
+                        var predictorValue = inflatedData[bufferRowStart];
+                        // console.log(bufferRowStart);
+                        // console.log("predictor for row " + rowIndex + ": " + predictorValue);
+                        if (predictorValue == 3 || predictorValue > 4) {
+                            console.log("quitting, found something not none, sub, or up");
+                            break;
+                        }
+
+                        var columnData = [];
+                        for (var columnIndex = 0; columnIndex < this.width; columnIndex++) {
+                            // extra byte per row.
+                            var bufferIndex = (bufferRowStart + 1) + columnIndex * numberComponents;
+
+                            // rgb.
+                            for (var componentIndex = 0; componentIndex < numberComponents; componentIndex++) {
+                                var givenByte = inflatedData[bufferIndex + componentIndex];
+
+                                // none.
+                                if (predictorValue == 0) {
+                                    columnData.push(givenByte);
+                                }
+                                else if (predictorValue == 1) {
+                                    // sub.
+                                    if (columnIndex == 0) {
+                                        // boundary.
+                                        columnData.push(givenByte);
+                                    }
+                                    else {
+                                        columnData.push((givenByte + columnData[columnData.length - numberComponents]) % 256);
+                                    }
+                                }
+                                else if (predictorValue == 2) {
+                                    // up.
+                                    if (rowIndex == 0) {
+                                        // boundary.
+                                        columnData.push(givenByte);
+                                    }
+                                    else {
+                                        var priorIndex = (rowIndex - 1) * this.width * numberComponents + columnIndex * numberComponents + componentIndex;
+                                        columnData.push((givenByte + unpredictedData[priorIndex]) % 256);
+                                    }
+                                }
+                                else if (predictorValue == 4) {
+                                    // paeth.
+                                    var left = 0;
+                                    var up = 0;
+                                    var upThenLeft = 0;
+
+                                    // can we get an up?
+                                    if (rowIndex > 0) {
+                                        var priorIndex = (rowIndex - 1) * this.width * numberComponents + columnIndex * numberComponents + componentIndex;
+                                        up = unpredictedData[priorIndex];
+                                    }
+
+                                    // can we get a left?
+                                    if (columnIndex > 0) {
+                                        // left exists.
+                                        left = columnData[columnData.length - numberComponents];
+                                    }
+
+                                    // can we get an up and then left?
+                                    if (rowIndex > 0 && columnIndex > 0) {
+                                        var priorIndex = (rowIndex - 1) * this.width * numberComponents + columnIndex * numberComponents + componentIndex;
+                                        upThenLeft = unpredictedData[priorIndex - numberComponents];
+                                    }
+
+                                    var initial = left + up - upThenLeft;
+                                    var pa = Math.abs(initial - left);
+                                    var pb = Math.abs(initial - up);
+                                    var pc = Math.abs(initial - upThenLeft);
+
+                                    var chosen = null;
+                                    if (pa <= pb && pa <= pc) {
+                                        chosen = left;
+                                    } else if (pb <= pc) {
+                                        chosen = up;
+                                    }
+                                    else {
+                                        chosen = upThenLeft;
+                                    }
+
+                                    columnData.push((givenByte + chosen) % 256);
+                                }
+                            }
+                        }
+
+                        for (var ci = 0; ci < columnData.length; ci++) {
+                            unpredictedData.push(columnData[ci]);
+                        }
+                    }
+
+                    console.log("unpredicted to size " + unpredictedData.length);
+                    data = unpredictedData;
+                }
+            }
+        }
+
+        // todo: generalize this.
+        if (this.color.bitsPerComponent == 1) {
+            // manually "expand" these sub-byte images.
+            console.log("special handling of bpp " + this.color.bitsPerComponent);
+            var expandedData = [];
+            
+            // note that row boundaries don't share bytes.
+            var rowLength = 0;
+            for (var byteIndex = 0; byteIndex < data.length; byteIndex++) {
+                var byteValue = data[byteIndex];
+                
+                for (var bitIndex = 0; bitIndex < 8; bitIndex++) {
+                    // big endian.
+                    var mask = 128 >> bitIndex;
+                    var masked = byteValue & mask;
+
+                    if (masked != 0) {
+                        expandedData.push(255);
+                    }
+                    else {
+                        expandedData.push(0);
+                    }
+
+                    rowLength += 1;
+
+                    if (rowLength >= this.width) {
+                        rowLength = 0;
+                        break;
+                    }
+                }
+            }
+
+            data = expandedData;
+        }
+        else if (this.color.bitsPerComponent == 4) {
+            // manually "expand" these sub-byte images.
+            console.log("special handling of bpp " + this.color.bitsPerComponent);
+            var expandedData = [];
+            
+            // note that row boundaries don't share bytes.
+            var rowLength = 0;
+            for (var byteIndex = 0; byteIndex < data.length; byteIndex++) {
+                var byteValue = data[byteIndex];
+                
+                for (var nibbleIndex = 0; nibbleIndex < 2; nibbleIndex++) {
+                    // big endian.
+                    var mask = 240 >> (4 * nibbleIndex);
+                    var masked = (byteValue & mask) >> (4 * (1 - nibbleIndex));
+
+                    expandedData.push(masked * 17)
+                    rowLength += 1;
+
+                    if (rowLength >= this.width) {
+                        rowLength = 0;
+                        break;
+                    }
+                }
+            }
+
+            data = expandedData;
+            
+        }
+        
         colorType = $tw.PDFColorSpace.PNGColorTypeMap[this.color.kind];
 
         // but if the softmask is present, we get an upgrade.
         if (softMaskData != null) {
+            console.log("applying softmask with number components: " + numberComponents);
             colorType = $tw.PDFColorSpace.PNGColorTypeAlphaMap[this.color.kind];
+            console.log("upgraded color type to " + colorType);
 
             // fix up data. this is slow. make it better.
             var mergedData = [];
             for (var i = 0; i < (data.length / numberComponents); i++) {
                 for (var c = 0; c < numberComponents; c++) {
-                    mergedData.push(data[i + c]);
+                    mergedData.push(data[numberComponents * i + c]);
                 }
 
                 mergedData.push(softMaskData[i]);
@@ -1217,7 +1443,6 @@ $tw.PDFImage.prototype.read = function() {
         }
     }
 
-    console.log(colorType);
     var result = new png.PNG({
         "width": this.width,
         "height": this.height,
@@ -1225,31 +1450,44 @@ $tw.PDFImage.prototype.read = function() {
         "colorType": colorType,
     });
 
-    console.log("read buffer");
-    console.log(data.length);
+    // console.log("read buffer");
+    // console.log(data.length);
 
     result.data = Buffer.from(data);
+    // var stringData = result.data.toString("hex");
+    // var ptr = 0;
+    // while (ptr < 2000) { //stringData.length) {
+    //     var rowString = "";
+    //     for (var nibbleIndex = 0; (nibbleIndex < 16) && (ptr < stringData.length); nibbleIndex++) {
+    //         // byte aligned worst case?
+    //         rowString += (stringData[ptr] + stringData[ptr + 1] + " ");
+    //         ptr += 2;
+    //     }
 
-    // // this is lame!    
+    //     console.log(rowString);
+    // }
+
+    // this is lame!    
     // for (var y = 0; y < this.height; y++) {
     //     for (var x = 0; x < this.width; x++) {
     //         // assuming scan lines are rows.
-    //         var fromBufferIndex = (this.width * y + x) * colorMultiplier;
-    //         var toBufferIndex = (this.width * y + x) * 4; // PNG always uses RGBA internally annoyingly.
+    //         var fromBufferIndex = (this.width * y + x) * 3;
+    //         var toBufferIndex = (this.width * y + x) * 3; //4; // PNG always uses RGBA internally annoyingly.
+    //         console.log("blah");
 
-    //         // unsure how PDF even uses alpha.
-    //         if (this.colorSpace == "DeviceGray") {
-    //             result.data[toBufferIndex + 0] = data[fromBufferIndex];
-    //             result.data[toBufferIndex + 1] = data[fromBufferIndex];
-    //             result.data[toBufferIndex + 2] = data[fromBufferIndex];
-    //         }
-    //         else if (this.colorSpace == "DeviceRGB") {
-    //             result.data[toBufferIndex + 0] = data[fromBufferIndex];
-    //             result.data[toBufferIndex + 1] = data[fromBufferIndex + 1];
-    //             result.data[toBufferIndex + 2] = data[fromBufferIndex + 2];                
-    //         }
-
-    //         result.data[toBufferIndex + 3] = 255;
+    //         // // unsure how PDF even uses alpha.
+    //         // if (this.colorSpace == "DeviceGray") {
+    //         //     result.data[toBufferIndex + 0] = data[fromBufferIndex];
+    //         //     result.data[toBufferIndex + 1] = data[fromBufferIndex];
+    //         //     result.data[toBufferIndex + 2] = data[fromBufferIndex];
+    //         // }
+    //         // else if (this.colorSpace == "DeviceRGB") {
+    //         result.data[toBufferIndex + 0] = data[fromBufferIndex];
+    //         result.data[toBufferIndex + 1] = data[fromBufferIndex + 1];
+    //         result.data[toBufferIndex + 2] = data[fromBufferIndex + 2];
+    //         //result.data[toBufferIndex + 3] = 255;
+    //         //}
+    //         //result.data[toBufferIndex + 3] = 255;
     //     }
     // }
 
@@ -1424,14 +1662,22 @@ $tw.PDFExternalObject.prototype.read = function() {
     // console.log("found some XObject names:");
     this.images = {};
     this.embedded = {};
+    console.log("PDFExternalObject.read()");
 
     for (var nameIndex = 0; nameIndex < this.names.length; nameIndex++) {        
         var name = this.names[nameIndex];
-
+        if (this.document.debug) {
+            console.log("xobject name: " + name);
+        }
+        
         // ask about it.
         var object = this.document.reader.queryDictionaryObject(this.root, name);
         var objectMetadata = object.getDictionary().toJSObject();
         if (objectMetadata.Subtype.value == $tw.PDFExternalObject.ImageSubtype) {
+            if (this.document.debug) {
+                console.log("found image subtype");
+            }
+            
             // Ignore Flate for now.
             if ((objectMetadata.Filter === undefined) || $tw.PDFExternalObject.SupportedFilters.indexOf(objectMetadata.Filter.value) < 0) {
                 console.log("skipping unsupported " + (objectMetadata.Filter === undefined) ? "undefined" : objectMetadata.Filter.value);
@@ -1443,37 +1689,88 @@ $tw.PDFExternalObject.prototype.read = function() {
             this.images[name] = image;
         }
         else if (objectMetadata.Subtype.value == $tw.PDFExternalObject.FormSubtype) {
+            if (this.document.debug) {
+                console.log("found form subtype: " + objectMetadata.Type);
+            }
+            
             // pull it out the hard way.
             // I don't think it can be anything else.
             if (objectMetadata.Type === undefined) {
+                if (this.document.debug) {
+                    console.log("UNDEFINED FORM TYPE");
+                }
+                
                 continue;
             }
             
             if (objectMetadata.Type.value == "XObject") {
+                if (this.document.debug) {
+                    console.log("form has embedded xobject");
+                }
+                
                 var indirect = this.root.queryObject(name);
                 var objectID = indirect.getObjectID();
                 //console.log("using object ID " + objectID);
-                
+
+                // expose the "entire" embedded xobject.
                 var form = new $tw.PDFForm(
                     this.document,
                     object,
                     objectID);
 
                 this.embedded[name] = form;
-                
-                // // OK, there might be something in here.
-                // var embeddedResources = new $tw.PDFPageResources(
-                //     this.reader,
-                //     this.reader.queryDictionaryObject(
-                //         object.getDictionary(),
-                //         "Resources"));
 
-                // if (embeddedResources.xobject != null) {
-                //     console.log("found embedded xobject");
-                //     embeddedResources.read();
+                // expose the individual objects too: TODO. harder than it appears.
+                var resourceObject = this.document.reader.queryDictionaryObject(
+                    object.getDictionary(),
+                    "Resources");
+                if (resourceObject !== undefined && resourceObject != null && (resourceObject.getType() == pdf.ePDFObjectDictionary)) {
+                    var embeddedResources = new $tw.PDFPageResources(
+                        this.document,
+                        resourceObject);
 
-                //     this.images[name] = embeddedResources.xobject.images;
-                // }
+                    if (embeddedResources.xobject != null) {
+                        if (this.document.debug) {
+                            console.log("embedded xobject has resources");
+                        }                    
+                        
+                        embeddedResources.read();
+
+                        // NOTE: these only go 1 level deep for now.
+                        // promote the embeds.
+                        var embeddedEmbeddedNames = Object.keys(embeddedResources.xobject.embedded);
+                        for (var embeddedNameIndex = 0; embeddedNameIndex < embeddedEmbeddedNames.length; embeddedNameIndex++) {
+                            var embeddedName = embeddedEmbeddedNames[embeddedNameIndex];
+
+                            var qualifiedName = name + "/" + embeddedName;
+                            if (qualifiedName in this.embedded) {
+                                console.log("WARN WARN: embededd name " + qualifiedName + " does not seem global. skipping.");
+                                continue;
+                            }
+
+                            this.embedded[qualifiedName] = embeddedResources.xobject.embedded[embeddedName];
+                        }
+
+                        // promote this images.
+                        var embeddedImageNames = Object.keys(embeddedResources.xobject.images);
+                        for (var embeddedNameIndex = 0; embeddedNameIndex < embeddedImageNames.length; embeddedNameIndex++) {
+                            var embeddedName = embeddedImageNames[embeddedNameIndex];
+
+                            var qualifiedName = name + "/" + embeddedName;
+                            if (qualifiedName in this.images) {
+                                console.log("WARN WARN: embededd name " + qualifiedName + " does not seem global. skipping.");
+                                continue;
+                            }
+
+                            this.images[qualifiedName] = embeddedResources.xobject.images[embeddedName];
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            if (this.document.debug) {
+                console.log("unknown subtype: " + objectMetadata.Subtype.value);
             }
         }
     }
@@ -1519,11 +1816,12 @@ $tw.PDFPage.ResourcesKey = "Resources";
 
 $tw.PDFPage.prototype.read = function() {
     this.resources.read();
-    this.hasRead = false;
+    this.hasRead = true;
 }
     
-$tw.PDFDocument = function(path) {
+$tw.PDFDocument = function(path, debug) {
     this.path = path;
+    this.debug = debug || false;
     this.reader = pdf.createReader(path);
     this.numberPages = this.reader.getPagesCount();
 
@@ -1536,10 +1834,12 @@ $tw.PDFDocument = function(path) {
     this.pages = [];
 
     for (var pageNumber = 0; pageNumber < this.numberPages; pageNumber++) {
-        console.log("reading page: " + pageNumber);
+        if (this.debug) {
+            console.log("reading page: " + pageNumber);
+        }
+        
         var pageMetadata = this.reader.parsePageDictionary(pageNumber);
         var page = new $tw.PDFPage(this, pageNumber, pageMetadata);
-        //page.read();
         
         this.pages.push(page);
     }
@@ -2562,9 +2862,9 @@ $tw.generatePDFDataTiddler = function(document, parentName) {
     };
 }
 
-$tw.loadTiddlersFromDocument = function(filepath) {
+$tw.loadTiddlersFromDocument = function(filepath, debug) {
     // Try a quick look into the file (only one tiddler per file for now).
-    var document = new $tw.PDFDocument(filepath);
+    var document = new $tw.PDFDocument(filepath, debug);
     // document.saveAllImages("dump");
     
     var ext = path.extname(filepath),
@@ -2599,24 +2899,27 @@ $tw.loadTiddlersFromDocument = function(filepath) {
 
 $tw.loadDocuments = function(documents, root) {
     var tiddlers = [];
+    var debug = false;
+    
     for (var documentIndex = 0; documentIndex < documents.length; documentIndex++) {
         var documentName = documents[documentIndex];
-        console.log("examing document candidate: " + documentName);
+        //console.log("examing document candidate: " + documentName);
 
         var ext = path.extname(documentName);
-        console.log("document has extension: " + ext);
+        //console.log("document has extension: " + ext);
 
         if (ext != ".pdf") {
             console.log("not a PDF (presumably), skipping");
             continue;
         }
 
-        // if (documentName != "1502.04623.pdf") { //"variational-inference-lecture1-blei.pdf") { //"1701.06264.pdf") {
+        // "variational-inference-lecture1-blei.pdf") { //"1701.06264.pdf") {
+        // if (documentName != "1502.04623.pdf") {
         //    continue;
         // }
 
         var documentPath = path.resolve(root, documentName);
-        tiddlers.push($tw.loadTiddlersFromDocument(documentPath));
+        tiddlers.push($tw.loadTiddlersFromDocument(documentPath, debug));
     }
 
     return tiddlers;

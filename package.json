@@ -26,12 +26,13 @@
   "dependencies": {
     "assert": "^1.4.1",
     "canvas": "^2.0.1",
-    "hummus": "^1.0.90",
+    "hummus": "^1.0.95",
     "jsdom": "^12.2.0",
     "memory-streams": "^0.1.3",
     "pdfjs-dist": "^2.0.489",
     "pngjs": "^3.3.3",
-    "streams": "^0.1.0"
+    "streams": "^0.1.0",
+    "zlib": "^1.0.5"
   },
   "devDependencies": {},
   "bundleDependencies": [],
