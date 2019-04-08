@@ -31,7 +31,9 @@ exports.handler = function(request, response, state) {
     var root = path.resolve($tw.boot.wikiPath, $tw.config.wikiDocumentsSubDir);
     var documentPath = path.resolve(root, name);
     if (!fs.existsSync(documentPath)) {
-        $tw.utils.error("unknown document: " + documentPath);
+        console.log("unknown document: " + documentPath);
+        response.writeHead(404);
+        response.end();
     }
 
     // Ask the cache.
@@ -47,7 +49,9 @@ exports.handler = function(request, response, state) {
     }
 
     if (pageIndex < 0 || pageIndex >= document.pages.length) {
-        $tw.utils.error("bad page index " + pageIndex);
+        console.log("bad page index " + pageIndex);
+        response.writeHead(404);
+        response.end();
     }
 
     var page = document.pages[pageIndex];

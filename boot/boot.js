@@ -1041,7 +1041,8 @@ $tw.convertPDFToPNG = function(bytes, pageNumber) {
     var source = {
         data: bytes,
         nativeImageDecoderSupport: 'none',
-        disableFontFace: true
+        disableFontFace: true,
+        stopAtErrors: false,
     };
 
     // load the PDF file.
@@ -2853,10 +2854,11 @@ $tw.generatePDFDataTiddler = function(document, parentName) {
     }
 
     data["pages"] = pagesData;
-    
+
+    // turning off tags, they cause a drop in TW performance.
     return {
         "title": parentName + " (data)",
-        "tags": parentName,
+        //"tags": parentName,
         "type": "application/json",
         "text": JSON.stringify(data, null, 2),
     };

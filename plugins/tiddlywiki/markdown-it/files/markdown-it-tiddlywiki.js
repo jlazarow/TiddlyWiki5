@@ -7,6 +7,7 @@ Take advantage of TiddlyWiki features within your CommonMark.
 'use strict';
 
 var GET_PDF_ROUTE = "http://localhost:8080/pdf/";
+var GET_IMG_ROUTE = "http://localhost:8080/files/img/";
 
 module.exports = function tiddlywiki_plugin(md, tw, currentTitle) {
     function transcludeReferences(src) {
@@ -26,6 +27,22 @@ module.exports = function tiddlywiki_plugin(md, tw, currentTitle) {
             if (referenceText.startsWith("pdf://")) {
                 // A PDF link.
                 var resourcePart = referenceText.replace(/^pdf?:\/\//, GET_PDF_ROUTE);
+                var resourceParts = resourcePart.split(" ");
+                var resourceURL = resourceParts[0];
+                
+                // pass on anything after a space.
+                var resourceExtra = "\"" + name + "\"";
+                if (resourceParts.length > 1) {
+                    resourceExtra = resourceParts[1];
+                }
+
+                var imageText = "![" + name + "]" + "(" + resourceURL + " " + resourceExtra + ")";
+                src = src.slice(0, match.index) + imageText + src.slice(match.index + matchText.length);
+                continue;
+            }
+            else if (referenceText.startsWith("img://")) {
+                // A PDF link.
+                var resourcePart = referenceText.replace(/^img?:\/\//, GET_IMG_ROUTE);
                 var resourceParts = resourcePart.split(" ");
                 var resourceURL = resourceParts[0];
                 
